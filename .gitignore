@@ -56,3 +56,6 @@ logs/
 # Settings and cache
 settings.json
 cache/
+
+# Databases
+*.db

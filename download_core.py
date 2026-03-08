@@ -38,8 +38,27 @@ class DownloadItem:
         self.pause_event = threading.Event()
         self.scan_status: Optional[str] = None
         self.error_message: str = ""
-        self.quality = 'best'  # Default quality setting
+        self.quality = 'best'
         self.paused = False
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """Reconstruct a DownloadItem from a dictionary (e.g., from DB)."""
+        item = cls(data['url'], data['destination'])
+        item.id = data['id']
+        item.filename = data['filename']
+        item.filepath = data['filepath']
+        item.state = data['state']
+        item.progress = data['progress']
+        item.total_size = data['total_size']
+        item.downloaded_size = data['downloaded_size']
+        item.quality = data.get('quality', 'best')
+        item.is_youtube = bool(data['is_youtube'])
+        item.error_message = data.get('error_message', '')
+        # Reset state if it was downloading/queued to avoid auto-start confusion
+        if item.state in [DownloadState.DOWNLOADING, DownloadState.QUEUED]:
+            item.state = DownloadState.PAUSED
+        return item
 
     def _extract_filename(self, url: str) -> str:
         """Robustly extracts a filename from a URL."""
