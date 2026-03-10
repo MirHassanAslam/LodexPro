@@ -51,7 +51,7 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
         setSelectedId(found.id);
         setEditedQueue({ ...found });
       }
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const loadFiles = async (id?: string) => {
@@ -62,7 +62,7 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
       setQueuedDownloads(
         (all || []).filter(t => t.queue_id === qid && t.status !== 'COMPLETED')
       );
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const handleSelectQueue = (id: string) => {
@@ -77,13 +77,14 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
     if (!name) return;
     const newQ: models.DownloadQueue = {
       id: '', name, is_default: false, max_concurrent: 2,
+      speed_limit_kbps: 0,
       start_time: '', stop_time: '', is_scheduled: false,
       days_of_week: [], task_ids: [],
     } as any;
     try {
       await SaveQueue(newQ);
       await loadQueues();
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const handleDeleteQueue = async () => {
@@ -93,7 +94,7 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
       await DeleteQueue(selectedId);
       setSelectedId('main');
       await loadQueues();
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const handleApply = async () => {
@@ -138,7 +139,7 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={onClose} />
       <div className="relative w-full max-w-3xl bg-[#161616] border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-        
+
         {/* Title bar */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/[0.02]">
           <div className="flex items-center space-x-3">
@@ -168,11 +169,10 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
                 <button
                   key={q.id}
                   onClick={() => handleSelectQueue(q.id)}
-                  className={`w-full text-left px-3 py-2.5 flex items-center space-x-2.5 transition-all ${
-                    selectedId === q.id
+                  className={`w-full text-left px-3 py-2.5 flex items-center space-x-2.5 transition-all ${selectedId === q.id
                       ? 'bg-xdm-accent/10 border-l-2 border-xdm-accent'
                       : 'hover:bg-white/5 border-l-2 border-transparent'
-                  }`}
+                    }`}
                 >
                   <QueueIcon isDefault={q.is_default} />
                   <span className={`text-xs truncate ${selectedId === q.id ? 'text-white font-semibold' : 'text-gray-400'}`}>{q.name}</span>
@@ -204,11 +204,10 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all capitalize ${
-                    activeTab === tab
+                  className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all capitalize ${activeTab === tab
                       ? 'bg-xdm-accent/10 text-xdm-accent border-b-2 border-xdm-accent'
                       : 'text-gray-500 hover:text-gray-300'
-                  }`}
+                    }`}
                 >
                   {tab === 'schedule' ? 'Schedule' : 'Files in the Queue'}
                 </button>
@@ -236,6 +235,35 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
                       />
                       <span className="text-xs text-gray-400">files at the same time</span>
                     </div>
+                  </div>
+
+                  {/* Speed Limit */}
+                  <div className="bg-white/[0.03] border border-white/5 rounded-xl p-4">
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">
+                      Queue Speed Limit
+                    </label>
+                    <div className="flex items-center space-x-3">
+                      <span className="text-xs text-gray-400">Limit to</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={128}
+                        value={editedQueue.speed_limit_kbps ?? 0}
+                        onChange={e => setEditedQueue({ ...editedQueue, speed_limit_kbps: parseInt(e.target.value) || 0 })}
+                        className="w-24 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white text-center focus:outline-none focus:border-xdm-accent/50"
+                      />
+                      <span className="text-xs text-gray-400">KB/s</span>
+                      {(editedQueue.speed_limit_kbps ?? 0) > 0 ? (
+                        <span className="text-[10px] text-xdm-accent font-bold bg-xdm-accent/10 px-2 py-0.5 rounded-full">
+                          {editedQueue.speed_limit_kbps! >= 1024
+                            ? `${(editedQueue.speed_limit_kbps! / 1024).toFixed(1)} MB/s`
+                            : `${editedQueue.speed_limit_kbps} KB/s`}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-gray-600 font-bold">Unlimited (uses global limit)</span>
+                      )}
+                    </div>
+                    <p className="text-[9px] text-gray-600 mt-2">Set to 0 to fall back to the global speed limit in Settings.</p>
                   </div>
 
                   {/* Schedule toggle */}
@@ -285,11 +313,10 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
                                   key={day}
                                   type="button"
                                   onClick={() => toggleDay(idx)}
-                                  className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                                    isActive
+                                  className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${isActive
                                       ? 'bg-xdm-accent text-white shadow-[0_0_8px_rgba(0,123,255,0.4)]'
                                       : 'bg-white/5 text-gray-500 hover:bg-white/10'
-                                  }`}
+                                    }`}
                                 >
                                   {day}
                                 </button>
@@ -352,7 +379,7 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
                       Refresh
                     </button>
                   </div>
-                  
+
                   {queuedDownloads.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 text-gray-500 space-y-3 opacity-60">
                       <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -385,13 +412,12 @@ const SchedulerView: React.FC<Props> = ({ onClose }) => {
                                 </td>
                                 <td className="px-3 py-3 text-right text-gray-400 whitespace-nowrap">{formatSize(t.total_size)}</td>
                                 <td className="px-3 py-3 text-right">
-                                  <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold ${
-                                    t.status === 'DOWNLOADING' ? 'bg-xdm-accent/10 text-xdm-accent' :
-                                    t.status === 'COMPLETED' ? 'bg-green-500/10 text-green-400' :
-                                    t.status === 'PAUSED' ? 'bg-yellow-500/10 text-yellow-400' :
-                                    t.status === 'ERROR' ? 'bg-red-500/10 text-red-400' :
-                                    'bg-white/5 text-gray-400'
-                                  }`}>{t.status}</span>
+                                  <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold ${t.status === 'DOWNLOADING' ? 'bg-xdm-accent/10 text-xdm-accent' :
+                                      t.status === 'COMPLETED' ? 'bg-green-500/10 text-green-400' :
+                                        t.status === 'PAUSED' ? 'bg-yellow-500/10 text-yellow-400' :
+                                          t.status === 'ERROR' ? 'bg-red-500/10 text-red-400' :
+                                            'bg-white/5 text-gray-400'
+                                    }`}>{t.status}</span>
                                 </td>
                                 <td className="px-4 py-3 text-right text-gray-500 whitespace-nowrap">{formatETA(t.eta)}</td>
                               </tr>

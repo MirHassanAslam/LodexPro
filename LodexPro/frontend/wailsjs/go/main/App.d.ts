@@ -15,15 +15,25 @@ export function DeleteDownload(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteQueue(arg1:string):Promise<void>;
 
+export function ExportDownloads():Promise<void>;
+
 export function FetchVideoMetadata(arg1:string):Promise<services.VideoMetadata>;
 
 export function GetConfig():Promise<models.AppConfig>;
 
 export function GetDownloads():Promise<Array<models.DownloadTask>>;
 
+export function GetExtensionInfo():Promise<Record<string, string>>;
+
 export function GetMediaList():Promise<Array<models.MediaItem>>;
 
 export function GetQueues():Promise<Array<models.DownloadQueue>>;
+
+export function GetVersion():Promise<string>;
+
+export function ImportDownloads():Promise<number>;
+
+export function InstallDependency(arg1:string):Promise<void>;
 
 export function IsAutoStartEnabled():Promise<boolean>;
 
@@ -33,6 +43,8 @@ export function OpenFolder(arg1:string):Promise<void>;
 
 export function OpenInBrowser(arg1:string):Promise<void>;
 
+export function PackageExtension():Promise<string>;
+
 export function PauseDownload(arg1:string):Promise<void>;
 
 export function ProcessQueue(arg1:string):Promise<void>;
@@ -40,6 +52,8 @@ export function ProcessQueue(arg1:string):Promise<void>;
 export function ReadClipboard():Promise<string>;
 
 export function RefreshLink(arg1:string,arg2:string):Promise<void>;
+
+export function RegisterBrowserExtension():Promise<void>;
 
 export function RemoveMediaItem(arg1:string):Promise<void>;
 
@@ -54,6 +68,8 @@ export function SelectFolder():Promise<string>;
 export function SetAutoStart(arg1:boolean):Promise<void>;
 
 export function SetSpeedLimit(arg1:number):Promise<void>;
+
+export function ShowWindow():Promise<void>;
 
 export function StartQueue(arg1:string):Promise<void>;
 

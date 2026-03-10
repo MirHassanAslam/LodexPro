@@ -55,10 +55,14 @@ func (s *YTService) Download(ctx context.Context, url string, format string, out
 		"-o", outputPath,
 		"--newline",
 		"--progress-template", "download-progress:%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.speed)s:%(progress.eta)s",
+		"--merge-output-format", "mp4", // merge bestvideo+bestaudio into single mp4 via ffmpeg
 	}
 
 	if format != "" && format != "best" {
 		args = append(args, "-f", format)
+	} else {
+		// Default: highest quality video + audio merged
+		args = append(args, "-f", "bestvideo+bestaudio/best")
 	}
 	args = append(args, url)
 

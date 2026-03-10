@@ -22,6 +22,7 @@ export namespace models {
 	    scan_with_antivirus: boolean;
 	    antivirus_executable: string;
 	    antivirus_args: string;
+	    virustotal_api_key: string;
 	    proxy_mode: string;
 	    proxy_host: string;
 	    proxy_port: number;
@@ -55,6 +56,7 @@ export namespace models {
 	        this.scan_with_antivirus = source["scan_with_antivirus"];
 	        this.antivirus_executable = source["antivirus_executable"];
 	        this.antivirus_args = source["antivirus_args"];
+	        this.virustotal_api_key = source["virustotal_api_key"];
 	        this.proxy_mode = source["proxy_mode"];
 	        this.proxy_host = source["proxy_host"];
 	        this.proxy_port = source["proxy_port"];
@@ -67,6 +69,7 @@ export namespace models {
 	    name: string;
 	    is_default: boolean;
 	    max_concurrent: number;
+	    speed_limit_kbps: number;
 	    start_time: string;
 	    stop_time: string;
 	    is_scheduled: boolean;
@@ -84,6 +87,7 @@ export namespace models {
 	        this.name = source["name"];
 	        this.is_default = source["is_default"];
 	        this.max_concurrent = source["max_concurrent"];
+	        this.speed_limit_kbps = source["speed_limit_kbps"];
 	        this.start_time = source["start_time"];
 	        this.stop_time = source["stop_time"];
 	        this.is_scheduled = source["is_scheduled"];

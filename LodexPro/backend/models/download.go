@@ -1,6 +1,5 @@
 package models
 
-
 type DownloadStatus string
 
 const (
@@ -29,24 +28,25 @@ type DownloadTask struct {
 }
 
 type DownloadQueue struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	IsDefault     bool     `json:"is_default"` // Only true for "Main download queue"
-	MaxConcurrent int      `json:"max_concurrent"`
-	StartTime     string   `json:"start_time"` // ISO or HH:mm format
-	StopTime      string   `json:"stop_time"`
-	IsScheduled   bool     `json:"is_scheduled"`
-	DaysOfWeek    []int    `json:"days_of_week"` // e.g. [0,1,2,3,4,5,6]
-	TaskIDs       []string `json:"task_ids"`     // Ordered list of tasks in this queue
-	PostAction    string   `json:"post_action"`  // "", "shutdown", "sleep", "hibernate"
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	IsDefault      bool     `json:"is_default"` // Only true for "Main download queue"
+	MaxConcurrent  int      `json:"max_concurrent"`
+	SpeedLimitKBps int      `json:"speed_limit_kbps"` // 0 = unlimited (per-queue cap)
+	StartTime      string   `json:"start_time"`       // ISO or HH:mm format
+	StopTime       string   `json:"stop_time"`
+	IsScheduled    bool     `json:"is_scheduled"`
+	DaysOfWeek     []int    `json:"days_of_week"` // e.g. [0,1,2,3,4,5,6]
+	TaskIDs        []string `json:"task_ids"`     // Ordered list of tasks in this queue
+	PostAction     string   `json:"post_action"`  // "", "shutdown", "sleep", "hibernate"
 }
 
 type Segment struct {
-	ID             int    `json:"id"`
-	StartByte      int64  `json:"start_byte"`
-	EndByte        int64  `json:"end_byte"`
-	DownloadedSize int64  `json:"downloaded_size"`
-	Completed      bool   `json:"completed"`
+	ID             int   `json:"id"`
+	StartByte      int64 `json:"start_byte"`
+	EndByte        int64 `json:"end_byte"`
+	DownloadedSize int64 `json:"downloaded_size"`
+	Completed      bool  `json:"completed"`
 }
 
 type MediaItem struct {

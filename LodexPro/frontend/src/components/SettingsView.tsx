@@ -29,6 +29,7 @@ interface AppConfig {
   scan_with_antivirus: boolean;
   antivirus_executable: string;
   antivirus_args: string;
+  virustotal_api_key: string;
   proxy_mode: string;
   proxy_host: string;
   proxy_port: number;
@@ -180,9 +181,8 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                activeTab === tab.id ? 'bg-xdm-accent text-white' : 'text-gray-400 hover:text-white hover:bg-white/5'
-              }`}
+              className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${activeTab === tab.id ? 'bg-xdm-accent text-white' : 'text-gray-400 hover:text-white hover:bg-white/5'
+                }`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
@@ -236,11 +236,10 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
                       <button
                         key={item.mode}
                         onClick={() => updateConfig({ file_conflict_mode: item.mode })}
-                        className={`flex-1 flex items-center justify-center space-x-2 px-4 py-3 rounded-xl text-sm font-medium transition-all border ${
-                          config.file_conflict_mode === item.mode
+                        className={`flex-1 flex items-center justify-center space-x-2 px-4 py-3 rounded-xl text-sm font-medium transition-all border ${config.file_conflict_mode === item.mode
                             ? 'bg-xdm-accent/10 border-xdm-accent/30 text-xdm-accent'
                             : 'bg-white/[0.03] border-white/5 text-gray-400 hover:bg-white/5'
-                        }`}
+                          }`}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
@@ -340,7 +339,7 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
                 </section>
 
                 <section className="bg-white/[0.03] border border-white/5 rounded-2xl p-6">
-                  <SectionHeader icon="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" 
+                  <SectionHeader icon="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
                     title="Category Folders" subtitle="Auto-sort downloads by file type into separate folders" />
                   <div className="space-y-3">
                     {[
@@ -381,7 +380,7 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
             {activeTab === 'network' && (
               <>
                 <section className="bg-white/[0.03] border border-white/5 rounded-2xl p-6">
-                  <SectionHeader icon="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829" 
+                  <SectionHeader icon="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829"
                     title="Blocked Hosts" subtitle="Downloads from these hosts will be ignored by the interceptor" />
                   <div className="flex items-center space-x-2 mb-3">
                     <input type="text" value={blockedHostInput} onChange={(e) => setBlockedHostInput(e.target.value)}
@@ -404,17 +403,16 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
                 </section>
 
                 <section className="bg-white/[0.03] border border-white/5 rounded-2xl p-6">
-                  <SectionHeader icon="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" 
+                  <SectionHeader icon="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
                     title="Proxy" subtitle="Route downloads through a proxy server" />
                   <div className="space-y-4">
                     <div className="flex space-x-3">
                       {['none', 'system', 'manual'].map(mode => (
                         <button key={mode} onClick={() => updateConfig({ proxy_mode: mode })}
-                          className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-medium transition-all border ${
-                            config.proxy_mode === mode 
-                              ? 'bg-xdm-accent/10 border-xdm-accent/30 text-xdm-accent' 
+                          className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-medium transition-all border ${config.proxy_mode === mode
+                              ? 'bg-xdm-accent/10 border-xdm-accent/30 text-xdm-accent'
                               : 'bg-white/[0.03] border-white/5 text-gray-400 hover:bg-white/5'
-                          }`}>
+                            }`}>
                           {mode === 'none' ? 'Direct' : mode === 'system' ? 'System' : 'Manual'}
                         </button>
                       ))}
@@ -454,7 +452,7 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
             {activeTab === 'system' && (
               <>
                 <section className="bg-white/[0.03] border border-white/5 rounded-2xl p-6">
-                  <SectionHeader icon="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" 
+                  <SectionHeader icon="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"
                     title="System Integration" />
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -475,7 +473,7 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
                 </section>
 
                 <section className="bg-white/[0.03] border border-white/5 rounded-2xl p-6">
-                  <SectionHeader icon="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" 
+                  <SectionHeader icon="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
                     title="Run Command After Download" subtitle="Execute a custom command when each download finishes" />
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -491,26 +489,36 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
                 </section>
 
                 <section className="bg-white/[0.03] border border-white/5 rounded-2xl p-6">
-                  <SectionHeader icon="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" 
+                  <SectionHeader icon="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
                     title="Antivirus Scan" subtitle="Scan completed downloads with your antivirus" />
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm text-white font-medium">Enable</p>
+                      <p className="text-sm text-white font-medium">Auto-Scan on Completion</p>
                       <Toggle checked={config.scan_with_antivirus} onChange={() => updateConfig({ scan_with_antivirus: !config.scan_with_antivirus })} />
                     </div>
                     {config.scan_with_antivirus && (
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-1">Executable Path</label>
-                          <input type="text" value={config.antivirus_executable} onChange={(e) => updateConfig({ antivirus_executable: e.target.value })}
-                            placeholder="C:\Program Files\AV\scan.exe"
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-xdm-accent/50" />
+                      <div className="space-y-4 pt-2 border-t border-white/5">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1.5">Executable Path</label>
+                            <input type="text" value={config.antivirus_executable} onChange={(e) => updateConfig({ antivirus_executable: e.target.value })}
+                              placeholder="e.g. defender or C:\Path\To\AV.exe"
+                              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-xdm-accent/50" />
+                            <p className="text-[9px] text-gray-600 mt-1">Use 'defender' for Windows Defender</p>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1.5">Arguments</label>
+                            <input type="text" value={config.antivirus_args} onChange={(e) => updateConfig({ antivirus_args: e.target.value })}
+                              placeholder="e.g. /scan"
+                              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-xdm-accent/50" />
+                          </div>
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">Arguments</label>
-                          <input type="text" value={config.antivirus_args} onChange={(e) => updateConfig({ antivirus_args: e.target.value })}
-                            placeholder="--scan"
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-xdm-accent/50" />
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1.5">VirusTotal API Key (Optional)</label>
+                          <input type="password" value={config.virustotal_api_key} onChange={(e) => updateConfig({ virustotal_api_key: e.target.value })}
+                            placeholder="Enables cloud scanning"
+                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-xs font-mono focus:outline-none focus:border-xdm-accent/50" />
+                          <p className="text-[9px] text-gray-600 mt-1">Get a free key from virustotal.com for extra security.</p>
                         </div>
                       </div>
                     )}
@@ -522,7 +530,7 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm text-white font-medium">LodexPro Version</p>
-                      <p className="text-xs text-gray-500 mt-0.5">Current version: 2.0.0</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Current version: {config.current_version || '2.0.0'}</p>
                     </div>
                     <button onClick={handleCheckUpdate} disabled={checkingUpdate}
                       className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50">
@@ -535,7 +543,7 @@ const SettingsView: React.FC<Props> = ({ onClose, clipboardMonitoring, setClipbo
                         <div className="w-2 h-2 rounded-full bg-xdm-accent animate-pulse" />
                         <span className="text-xs text-xdm-accent font-bold">New version {updateInfo.latest} is available!</span>
                       </div>
-                      <a href={updateInfo.url} target="_blank" rel="noreferrer" 
+                      <a href={updateInfo.url} target="_blank" rel="noreferrer"
                         className="px-3 py-1 bg-xdm-accent text-white text-[10px] font-bold rounded-lg hover:bg-blue-600 transition-colors">
                         Download Now
                       </a>

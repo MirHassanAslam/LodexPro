@@ -1,10 +1,15 @@
 package main
 
 import (
+	"LodexPro/backend/downloader"
+	"LodexPro/backend/models"
+	"LodexPro/backend/services"
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,26 +18,28 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"LodexPro/backend/downloader"
-	"LodexPro/backend/models"
-	"LodexPro/backend/services"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
+// AppVersion is set at build time via: -ldflags "-X main.AppVersion=v2.1.0"
+var AppVersion = "v2.0.0"
+
 type App struct {
-	ctx      context.Context
-	engine   *downloader.Engine
-	storage  *services.Storage
-	config   *services.ConfigService
-	media    *services.MediaService
-	ytdlp    *services.YTService
-	cancels    map[string]context.CancelFunc
-	cancelMu   sync.Mutex
-	queueMu    sync.Mutex
-	maxActive  int
-	mediaMu    sync.Mutex
-	mediaList  []models.MediaItem
+	ctx       context.Context
+	engine    *downloader.Engine
+	storage   *services.Storage
+	config    *services.ConfigService
+	media     *services.MediaService
+	ytdlp     *services.YTService
+	antivirus *services.AntivirusService
+	cancels   map[string]context.CancelFunc
+	cancelMu  sync.Mutex
+	queueMu   sync.Mutex
+	maxActive int
+	mediaMu   sync.Mutex
+	mediaList []models.MediaItem
 }
 
 // NewApp creates a new App application struct
@@ -57,6 +64,7 @@ func NewApp() *App {
 
 	app.ytdlp = services.NewYTService(app.getBinaryPath("yt-dlp"))
 	app.media = services.NewMediaService(app.getBinaryPath("ffmpeg"))
+	app.antivirus = services.NewAntivirusService(app.config.Config)
 
 	return app
 }
@@ -103,6 +111,14 @@ func (a *App) startup(ctx context.Context) {
 		a.engine.SetGlobalSpeedLimit(int64(a.config.Config.SpeedLimitKBps) * 1024)
 	}
 
+	// Apply proxy settings
+	a.applyProxyToEngine()
+
+	// Keep PC awake during downloads if configured
+	if a.config.Config.KeepPCAwake {
+		a.keepAwake()
+	}
+
 	// Fix orphaned downloads that were interrupted (e.g., app crash)
 	if tasks, err := a.storage.GetAllTasks(); err == nil {
 		for _, t := range tasks {
@@ -115,6 +131,34 @@ func (a *App) startup(ctx context.Context) {
 
 	go a.startInterceptionServer()
 	go a.startQueueScheduler()
+}
+
+// applyProxyToEngine builds a proxy URL from config and updates the download engine.
+func (a *App) applyProxyToEngine() {
+	if a.engine == nil {
+		return
+	}
+	cfg := a.config.Config
+	var proxyURL string
+	switch cfg.ProxyMode {
+	case "http", "https":
+		if cfg.ProxyHost != "" {
+			if cfg.ProxyUser != "" {
+				proxyURL = fmt.Sprintf("%s://%s:%s@%s:%d", cfg.ProxyMode, cfg.ProxyUser, cfg.ProxyPass, cfg.ProxyHost, cfg.ProxyPort)
+			} else {
+				proxyURL = fmt.Sprintf("%s://%s:%d", cfg.ProxyMode, cfg.ProxyHost, cfg.ProxyPort)
+			}
+		}
+	case "socks5":
+		if cfg.ProxyHost != "" {
+			if cfg.ProxyUser != "" {
+				proxyURL = fmt.Sprintf("socks5://%s:%s@%s:%d", cfg.ProxyUser, cfg.ProxyPass, cfg.ProxyHost, cfg.ProxyPort)
+			} else {
+				proxyURL = fmt.Sprintf("socks5://%s:%d", cfg.ProxyHost, cfg.ProxyPort)
+			}
+		}
+	}
+	a.engine.SetProxy(proxyURL)
 }
 
 func (a *App) startInterceptionServer() {
@@ -206,7 +250,7 @@ func (a *App) FetchVideoMetadata(url string) (*services.VideoMetadata, error) {
 	if !isYoutube {
 		return nil, fmt.Errorf("URL is not a YouTube video")
 	}
-	
+
 	// Check if yt-dlp exists before trying to fetch
 	ytdlpPath := a.getBinaryPath("yt-dlp")
 	if _, pathErr := exec.LookPath(ytdlpPath); pathErr != nil {
@@ -228,13 +272,13 @@ func (a *App) ReadClipboard() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Basic validation if it's a URL
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://") {
 		return text, nil
 	}
-	
+
 	return "", fmt.Errorf("Clipboard does not contain a valid URL")
 }
 
@@ -245,7 +289,7 @@ func (a *App) AddDownload(url string, filename string, savePath string, format s
 
 	// Simple YouTube detection
 	isYoutube := strings.Contains(url, "youtube.com") || strings.Contains(url, "youtu.be")
-	
+
 	var task *models.DownloadTask
 	var err error
 
@@ -258,7 +302,7 @@ func (a *App) AddDownload(url string, filename string, savePath string, format s
 				filename = "youtube_video.mp4"
 			}
 		}
-		
+
 		task = &models.DownloadTask{
 			URL:      url,
 			Filename: filename,
@@ -279,7 +323,7 @@ func (a *App) AddDownload(url string, filename string, savePath string, format s
 		task.Filename = a.sanitizeFilename(filename)
 		task.Category = a.getCategory(task.Filename)
 	}
-	
+
 	// Determine save folder: explicit savePath > category folder > default folder > user Downloads
 	if savePath == "" {
 		// Try category-specific folder from config
@@ -292,14 +336,14 @@ func (a *App) AddDownload(url string, filename string, savePath string, format s
 			savePath = filepath.Join(savePath, "Downloads")
 		}
 	}
-	
+
 	// Ensure the folder exists
 	os.MkdirAll(savePath, 0755)
 
 	if queueId == "" {
 		queueId = "main"
 	}
-	
+
 	fullPath := filepath.Join(savePath, task.Filename)
 
 	// File conflict resolution
@@ -451,11 +495,11 @@ func (a *App) ProcessQueue(queueId string) {
 		}
 		queuedTasks = orderedQueuedTasks
 	}
-	
+
 	for activeCount < targetQueue.MaxConcurrent && len(queuedTasks) > 0 {
 		taskToStart := queuedTasks[0]
 		queuedTasks = queuedTasks[1:]
-		
+
 		go a.runDownload(taskToStart)
 		activeCount++
 	}
@@ -463,7 +507,7 @@ func (a *App) ProcessQueue(queueId string) {
 
 func (a *App) runDownload(task *models.DownloadTask) {
 	ctx, cancel := context.WithCancel(a.ctx)
-	
+
 	a.cancelMu.Lock()
 	a.cancels[task.ID] = cancel
 	a.cancelMu.Unlock()
@@ -478,10 +522,28 @@ func (a *App) runDownload(task *models.DownloadTask) {
 	a.storage.SaveTask(task)
 	runtime.EventsEmit(a.ctx, "download-progress", task)
 
+	// Apply per-queue speed limit if set (takes precedence over global)
+	if queues, err := a.storage.GetQueues(); err == nil {
+		for _, q := range queues {
+			if q.ID == task.QueueID && q.SpeedLimitKBps > 0 {
+				a.engine.SetGlobalSpeedLimit(int64(q.SpeedLimitKBps) * 1024)
+				defer func() {
+					// Restore global limit when done
+					a.engine.SetGlobalSpeedLimit(int64(a.config.Config.SpeedLimitKBps) * 1024)
+				}()
+				break
+			}
+		}
+	}
+
 	maxRetries := a.config.Config.MaxRetry
 	retryDelay := a.config.Config.RetryDelay
-	if maxRetries <= 0 { maxRetries = 1 }
-	if retryDelay <= 0 { retryDelay = 5 }
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+	if retryDelay <= 0 {
+		retryDelay = 5
+	}
 
 	var err error
 	isYoutube := strings.Contains(task.URL, "youtube.com") || strings.Contains(task.URL, "youtu.be")
@@ -546,14 +608,21 @@ func (a *App) runDownload(task *models.DownloadTask) {
 		}
 
 		// Run antivirus scan if configured
-		if a.config.Config.ScanWithAntiVirus && a.config.Config.AntiVirusExecutable != "" {
-			go func(savePath string) {
-				args := []string{savePath}
-				if a.config.Config.AntiVirusArgs != "" {
-					args = append([]string{a.config.Config.AntiVirusArgs}, savePath)
+		if a.config.Config.ScanWithAntiVirus {
+			go func(t *models.DownloadTask) {
+				runtime.EventsEmit(a.ctx, "antivirus-scan-start", t.ID)
+				result, err := a.antivirus.ScanFile(t.SavePath)
+				if err == nil {
+					runtime.EventsEmit(a.ctx, "antivirus-scan-result", map[string]interface{}{
+						"taskId": t.ID,
+						"result": result,
+					})
+					// If infected and quarantine is enabled, we could move file here
+					if result.Status == services.ScanStatusInfected {
+						log.Printf("THREAT DETECTED in %s: %v", t.Filename, result.Threats)
+					}
 				}
-				exec.Command(a.config.Config.AntiVirusExecutable, args...).Run()
-			}(task.SavePath)
+			}(task)
 		}
 
 		// Run custom command if configured (global)
@@ -593,7 +662,7 @@ func (a *App) PauseDownload(id string) error {
 			runtime.EventsEmit(a.ctx, "download-progress", task)
 		}
 	}
-	
+
 	// A slot opened up, process the queue
 	if task != nil {
 		go a.ProcessQueue(task.QueueID)
@@ -690,7 +759,16 @@ func (a *App) SaveConfig(cfg *models.AppConfig) error {
 	a.maxActive = cfg.MaxParallelDownloads
 	if a.engine != nil {
 		a.engine.SetGlobalSpeedLimit(int64(cfg.SpeedLimitKBps) * 1024)
+		a.applyProxyToEngine()
 	}
+	// Apply keep-awake setting
+	if cfg.KeepPCAwake {
+		a.keepAwake()
+	} else {
+		a.stopKeepAwake()
+	}
+	// Sync Windows autostart registry
+	a.SetAutoStart(cfg.RunOnLogon)
 	return a.config.Save()
 }
 
@@ -733,12 +811,12 @@ func (a *App) StartQueue(id string) error {
 	if id == "" {
 		id = "main"
 	}
-	
+
 	tasks, err := a.storage.GetAllTasks()
 	if err != nil {
 		return err
 	}
-	
+
 	// Mark all PAUSED/ERROR tasks in this queue as QUEUED so they can be processed
 	for _, t := range tasks {
 		if t.QueueID == id && (t.Status == models.StatusPaused || t.Status == models.StatusError) {
@@ -747,7 +825,7 @@ func (a *App) StartQueue(id string) error {
 			runtime.EventsEmit(a.ctx, "download-progress", t)
 		}
 	}
-	
+
 	a.ProcessQueue(id)
 	return nil
 }
@@ -756,18 +834,18 @@ func (a *App) StopQueue(id string) error {
 	if id == "" {
 		id = "main"
 	}
-	
+
 	tasks, err := a.storage.GetAllTasks()
 	if err != nil {
 		return err
 	}
-	
+
 	for _, t := range tasks {
 		if t.QueueID == id && (t.Status == models.StatusDownloading || t.Status == models.StatusQueued) {
 			a.PauseDownload(t.ID)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -779,11 +857,11 @@ func (a *App) executePostAction(action string) {
 
 	// Give a warning dialog so user can cancel
 	result, _ := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
-		Type:          runtime.WarningDialog,
-		Title:         "Queue Complete — LodexPro",
-		Message:       fmt.Sprintf("All downloads finished.\n\nComputer will %s in 30 seconds.\nClick Cancel to abort.", action),
-		Buttons:       []string{"Cancel"},
-		CancelButton:  "Cancel",
+		Type:         runtime.WarningDialog,
+		Title:        "Queue Complete — LodexPro",
+		Message:      fmt.Sprintf("All downloads finished.\n\nComputer will %s in 30 seconds.\nClick Cancel to abort.", action),
+		Buttons:      []string{"Cancel"},
+		CancelButton: "Cancel",
 	})
 
 	if result == "Cancel" {
@@ -953,11 +1031,10 @@ func (a *App) RemoveMediaItem(id string) {
 }
 
 func (a *App) CheckForUpdates() (*models.UpdateInfo, error) {
-	// https://api.github.com/repos/Mir-Hassan-Aslam/LodexPro-2.0/releases/latest
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get("https://api.github.com/repos/Mir-Hassan-Aslam/LodexPro-2.0/releases/latest")
 	if err != nil {
-		return &models.UpdateInfo{Available: false, Current: "2.0.0"}, err
+		return &models.UpdateInfo{Available: false, Current: AppVersion}, err
 	}
 	defer resp.Body.Close()
 
@@ -966,13 +1043,263 @@ func (a *App) CheckForUpdates() (*models.UpdateInfo, error) {
 		HtmlUrl string `json:"html_url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return &models.UpdateInfo{Available: false, Current: "2.0.0"}, err
+		return &models.UpdateInfo{Available: false, Current: AppVersion}, err
 	}
 
 	return &models.UpdateInfo{
-		Available: release.TagName != "v2.0.0" && release.TagName != "",
-		Current:   "2.0.0",
+		Available: release.TagName != AppVersion && release.TagName != "",
+		Current:   AppVersion,
 		Latest:    release.TagName,
 		Url:       "https://github.com/Mir-Hassan-Aslam/LodexPro-2.0/releases",
 	}, nil
+}
+
+// GetVersion returns the current app version to the frontend.
+func (a *App) GetVersion() string {
+	return AppVersion
+}
+
+// ShowWindow brings the main window to the front (called from systray).
+func (a *App) ShowWindow() {
+	runtime.WindowShow(a.ctx)
+}
+
+// InstallDependency downloads yt-dlp or ffmpeg into the app's bin directory.
+// It emits "dependency-progress" events with a float64 (0.0–1.0) for the UI.
+func (a *App) InstallDependency(name string) error {
+	exePath, _ := os.Executable()
+	binDir := filepath.Join(filepath.Dir(exePath), "bin")
+
+	// Also try CWD bin (for dev mode)
+	cwd, _ := os.Getwd()
+	if _, err := os.Stat(filepath.Join(cwd, "bin")); err == nil {
+		binDir = filepath.Join(cwd, "bin")
+	}
+
+	onProgress := func(p float64) {
+		runtime.EventsEmit(a.ctx, "dependency-progress", map[string]interface{}{
+			"name":     name,
+			"progress": p,
+		})
+	}
+
+	var err error
+	switch name {
+	case "yt-dlp":
+		err = services.DownloadYTDLP(binDir, onProgress)
+	case "ffmpeg":
+		err = services.DownloadFFmpeg(binDir, onProgress)
+	default:
+		return fmt.Errorf("unknown dependency: %s", name)
+	}
+
+	if err == nil {
+		runtime.EventsEmit(a.ctx, "dependency-progress", map[string]interface{}{
+			"name":     name,
+			"progress": 1.0,
+			"done":     true,
+		})
+	}
+	return err
+}
+
+// ExportDownloads saves all download tasks to a user-chosen JSON file.
+func (a *App) ExportDownloads() error {
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Export Downloads",
+		DefaultFilename: "lodexpro_backup.json",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "JSON Files", Pattern: "*.json"},
+		},
+	})
+	if err != nil || path == "" {
+		return err
+	}
+
+	tasks, err := a.storage.GetAllTasks()
+	if err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(tasks, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// ImportDownloads reads a JSON backup and re-adds all tasks as queued.
+func (a *App) ImportDownloads() (int, error) {
+	paths, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Import Downloads",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "JSON Files", Pattern: "*.json"},
+		},
+	})
+	if err != nil || len(paths) == 0 {
+		return 0, err
+	}
+
+	data, err := os.ReadFile(paths[0])
+	if err != nil {
+		return 0, err
+	}
+
+	var tasks []*models.DownloadTask
+	if err := json.Unmarshal(data, &tasks); err != nil {
+		return 0, fmt.Errorf("invalid import file: %w", err)
+	}
+
+	count := 0
+	for _, t := range tasks {
+		// Assign a fresh ID so it doesn't conflict
+		t.ID = fmt.Sprintf("import_%d_%d", time.Now().UnixNano(), count)
+		t.Status = models.StatusQueued
+		t.DownloadedSize = 0
+		t.Segments = nil
+		if err := a.storage.SaveTask(t); err == nil {
+			count++
+			runtime.EventsEmit(a.ctx, "download-progress", t)
+		}
+	}
+	return count, nil
+}
+
+// RegisterBrowserExtension builds the native messaging host and registers it
+// in the Windows registry for Chrome and Edge.
+func (a *App) RegisterBrowserExtension() error {
+	exePath, _ := os.Executable()
+	appDir := filepath.Dir(exePath)
+
+	// In dev mode, use the current working directory
+	if cwd, err := os.Getwd(); err == nil {
+		if _, e := os.Stat(filepath.Join(cwd, "wails.json")); e == nil {
+			appDir = cwd
+		}
+	}
+
+	hostExe := filepath.Join(appDir, "lodexpro-host.exe")
+	manifestPath := filepath.Join(appDir, "com.lodexpro.host.json")
+
+	// Build the native messaging host binary
+	buildCmd := exec.Command("go", "build", "-o", hostExe, "./browser-host")
+	buildCmd.Dir = appDir
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to build host: %v — %s", err, string(out))
+	}
+
+	// Write the native messaging manifest
+	manifest := map[string]interface{}{
+		"name":        "com.lodexpro.host",
+		"description": "LodexPro Download Manager Native Messaging Host",
+		"path":        hostExe,
+		"type":        "stdio",
+		"allowed_origins": []string{
+			"chrome-extension://*/",
+		},
+	}
+	data, _ := json.MarshalIndent(manifest, "", "  ")
+	if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+		return err
+	}
+
+	// Register in Windows registry for Chrome and Edge
+	regPaths := []string{
+		`Software\Google\Chrome\NativeMessagingHosts\com.lodexpro.host`,
+		`Software\Microsoft\Edge\NativeMessagingHosts\com.lodexpro.host`,
+	}
+	for _, regPath := range regPaths {
+		cmd := exec.Command("reg", "add",
+			`HKCU\`+regPath,
+			"/ve", "/t", "REG_SZ", "/d", manifestPath, "/f")
+		cmd.Run() // best-effort — Edge/Chrome may not be installed
+	}
+
+	return nil
+}
+
+// GetExtensionInfo returns the path to the browser extension source folder
+// so the user can load it as an unpacked extension.
+func (a *App) GetExtensionInfo() map[string]string {
+	exePath, _ := os.Executable()
+	appDir := filepath.Dir(exePath)
+	if cwd, err := os.Getwd(); err == nil {
+		if _, e := os.Stat(filepath.Join(cwd, "wails.json")); e == nil {
+			appDir = cwd
+		}
+	}
+	extPath := filepath.Join(appDir, "..", "legacy_code", "browser_extension")
+	return map[string]string{
+		"extension_path": filepath.Clean(extPath),
+		"chrome_url":     "chrome://extensions",
+		"edge_url":       "edge://extensions",
+	}
+}
+
+// PackageExtension zips the browser extension for distribution
+func (a *App) PackageExtension() (string, error) {
+	info := a.GetExtensionInfo()
+	extPath := info["extension_path"]
+
+	destPath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Save Extension Package",
+		DefaultFilename: "lodexpro_extension.zip",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "ZIP Files", Pattern: "*.zip"},
+		},
+	})
+	if err != nil || destPath == "" {
+		return "", err
+	}
+
+	err = a.zipFolder(extPath, destPath)
+	return destPath, err
+}
+
+func (a *App) zipFolder(source, target string) error {
+	zipfile, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	defer zipfile.Close()
+
+	archive := zip.NewWriter(zipfile)
+	defer archive.Close()
+
+	filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+
+		header.Name, _ = filepath.Rel(source, path)
+		if info.IsDir() {
+			header.Name += "/"
+		} else {
+			header.Method = zip.Deflate
+		}
+
+		writer, err := archive.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		_, err = io.Copy(writer, file)
+		return err
+	})
+
+	return nil
 }

@@ -5,7 +5,7 @@ import NewDownloadDialog from './components/NewDownloadDialog';
 import SchedulerView from './components/SchedulerView';
 import { models } from '../wailsjs/go/models';
 import * as Events from '../wailsjs/runtime/runtime';
-import { AddDownload, GetDownloads, CheckDependencies, ReadClipboard, OpenInBrowser, RefreshLink, ResumeDownload, PauseDownload, DeleteDownload } from '../wailsjs/go/main/App';
+import { AddDownload, GetDownloads, CheckDependencies, ReadClipboard, OpenInBrowser, RefreshLink, ResumeDownload, PauseDownload, DeleteDownload, GetConfig, CheckForUpdates, InstallDependency, ExportDownloads, ImportDownloads, GetVersion, RegisterBrowserExtension, GetExtensionInfo, PackageExtension } from '../wailsjs/go/main/App';
 import SettingsView from './components/SettingsView';
 import MediaGrabberView from './components/MediaGrabberView';
 import CompletionNotification from './components/CompletionNotification';
@@ -21,10 +21,10 @@ function App() {
   const [isAdding, setIsAdding] = useState(false);
   const [interceptedUrl, setInterceptedUrl] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
-  const [deps, setDeps] = useState<{[key: string]: boolean}>({});
+  const [deps, setDeps] = useState<{ [key: string]: boolean }>({});
   const [showSettings, setShowSettings] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
-  const [clipboardMonitoring, setClipboardMonitoring] = useState(true);
+  const [clipboardMonitoring, setClipboardMonitoring] = useState(false);
   const [activeTab, setActiveTab] = useState<StatusTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date');
@@ -32,15 +32,45 @@ function App() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [detailedTaskId, setDetailedTaskId] = useState<string | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string> | null>(null);
-  
+  const [updateInfo, setUpdateInfo] = useState<{ available: boolean; latest: string; url: string } | null>(null);
+  const [installingDep, setInstallingDep] = useState<string | null>(null);
+  const [depProgress, setDepProgress] = useState(0);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isZipping, setIsZipping] = useState(false);
+
   // Ref for clipboard to avoid dependency hell
   const lastClipboardRef = React.useRef('');
   const refreshingTaskRef = React.useRef<models.DownloadTask | null>(null);
   const [refreshingTask, setRefreshingTaskState] = useState<models.DownloadTask | null>(null);
+  // Speed history map persists across DetailedProgress open/close cycles
+  const speedHistoryMap = React.useRef<Map<string, number[]>>(new Map());
+  const [appVersion, setAppVersion] = useState('v2.0.0');
 
   const setRefreshingTask = (task: models.DownloadTask | null) => {
     refreshingTaskRef.current = task;
     setRefreshingTaskState(task);
+  };
+
+  // Play a soft completion chime using Web Audio API (no audio file needed)
+  const playCompletionSound = () => {
+    try {
+      const ctx = new AudioContext();
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+      gain.connect(ctx.destination);
+      // Two-tone chime: 880Hz then 1100Hz
+      [880, 1100].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        osc.start(ctx.currentTime + i * 0.18);
+        osc.stop(ctx.currentTime + i * 0.18 + 0.5);
+      });
+    } catch { }
   };
 
   useEffect(() => {
@@ -52,7 +82,7 @@ function App() {
           const text = await ReadClipboard();
           if (text && text !== lastClipboardRef.current) {
             lastClipboardRef.current = text;
-            
+
             if (refreshingTaskRef.current) {
               // We are waiting for a refresh!
               handleAddRefresh(refreshingTaskRef.current.id, text);
@@ -70,17 +100,53 @@ function App() {
   }, [clipboardMonitoring]);
 
   useEffect(() => {
-    // Load initial downloads
-    GetDownloads().then(data => {
-      setDownloads(data || []);
+    GetDownloads().then(data => { setDownloads(data || []); });
+    CheckDependencies().then(setDeps);
+    GetVersion().then(setAppVersion);
+
+    // Load saved config and apply settings that the frontend manages
+    GetConfig().then(cfg => {
+      if (cfg) setClipboardMonitoring(cfg.monitor_clipboard);
     });
 
-    CheckDependencies().then(setDeps);
+    // Check for updates after a short delay (non-blocking)
+    setTimeout(() => {
+      CheckForUpdates().then(info => {
+        if (info?.available) setUpdateInfo({ available: true, latest: info.latest, url: info.url });
+      }).catch(() => { });
+    }, 4000);
+
+    // Listen for dependency install progress
+    const depOff = Events.EventsOn('dependency-progress', (data: any) => {
+      setDepProgress(Math.round((data.progress || 0) * 100));
+      if (data.done) {
+        setInstallingDep(null);
+        setDepProgress(0);
+        CheckDependencies().then(setDeps);
+      }
+    });
 
     // Listen for progress updates
     const progressOff = Events.EventsOn("download-progress", (data: models.DownloadTask) => {
       setDownloads(prev => {
         const index = prev.findIndex(d => d.id === data.id);
+        const oldStatus = index !== -1 ? prev[index].status : null;
+
+        // Piece 3: Play sound when transition to COMPLETED
+        if (data.status === 'COMPLETED' && oldStatus !== 'COMPLETED' && oldStatus !== null) {
+          playCompletionSound();
+        }
+
+        // Piece 4: Accumulate speed history
+        if (data.status === 'DOWNLOADING') {
+          const history = speedHistoryMap.current.get(data.id) || [];
+          const newHistory = [...history.slice(-59), data.speed]; // Keep last 60 points
+          speedHistoryMap.current.set(data.id, newHistory);
+        } else if (data.status === 'COMPLETED' || data.status === 'ERROR') {
+          // Cleanup history for finished tasks
+          // speedHistoryMap.current.delete(data.id); 
+        }
+
         if (index === -1) return [data, ...prev];
         const newDownloads = [...prev];
         newDownloads[index] = data;
@@ -101,9 +167,17 @@ function App() {
       }
     });
 
+    const avOff = Events.EventsOn("antivirus-scan-result", (data: any) => {
+      if (data.result.status === 'INFECTED') {
+        alert("🚨 THREAT DETECTED!\n\nFile: " + data.result.file_path + "\n\nThe file may be malicious. Please check with your antivirus.");
+      }
+    });
+
     return () => {
       progressOff();
       interceptOff();
+      depOff();
+      avOff();
     };
   }, []);
 
@@ -202,23 +276,23 @@ function App() {
 
   const bulkPause = () => selectedIds.forEach(id => PauseDownload(id));
   const bulkResume = () => selectedIds.forEach(id => ResumeDownload(id));
-  
+
   const handleConfirmDelete = async (deleteFiles: boolean) => {
     if (!deletingIds) return;
-    
+
     // Batch process to avoid hanging UI
     const ids = Array.from(deletingIds);
     setDeletingIds(null);
     setSelectedIds(new Set());
-    
+
     // Use for...of to process sequentially but without blocking the main thread
     for (const id of ids) {
-        try {
-            await DeleteDownload(id, deleteFiles);
-            removeTaskFromState(id);
-        } catch (err) {
-            console.error(`Failed to delete ${id}:`, err);
-        }
+      try {
+        await DeleteDownload(id, deleteFiles);
+        removeTaskFromState(id);
+      } catch (err) {
+        console.error(`Failed to delete ${id}:`, err);
+      }
     }
   };
 
@@ -232,15 +306,30 @@ function App() {
 
   return (
     <div className="flex h-screen bg-xdm-dark text-white overflow-hidden font-sans selection:bg-xdm-accent/30 relative">
-      <Sidebar 
-        activeCategory={activeCategory} 
-        onSelectCategory={setActiveCategory} 
+      <Sidebar
+        activeCategory={activeCategory}
+        onSelectCategory={setActiveCategory}
         onSettingsClick={() => setShowSettings(true)}
       />
-      
+
+      {/* Dep install progress overlay */}
+      {installingDep && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div className="relative w-full max-w-sm bg-[#141414] border border-white/10 rounded-2xl p-6 shadow-2xl">
+            <p className="text-sm font-bold text-white mb-1">Installing {installingDep}…</p>
+            <p className="text-xs text-gray-400 mb-4">Downloading from official source</p>
+            <div className="w-full bg-white/10 rounded-full h-2">
+              <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-2 rounded-full transition-all duration-300" style={{ width: `${depProgress}%` }} />
+            </div>
+            <p className="text-xs text-gray-500 mt-2 text-right">{depProgress}%</p>
+          </div>
+        </div>
+      )}
+
       {showSettings && (
-        <SettingsView 
-          onClose={() => setShowSettings(false)} 
+        <SettingsView
+          onClose={() => setShowSettings(false)}
           clipboardMonitoring={clipboardMonitoring}
           setClipboardMonitoring={setClipboardMonitoring}
         />
@@ -284,22 +373,23 @@ function App() {
       )}
 
       {isAdding && (
-        <NewDownloadDialog 
+        <NewDownloadDialog
           initialUrl={interceptedUrl}
-          onAdd={handleAddDownload} 
+          onAdd={handleAddDownload}
           onCancel={() => {
             setIsAdding(false);
             setInterceptedUrl('');
-          }} 
+          }}
         />
       )}
 
       <CompletionNotification />
-      
-      {detailedTaskId && downloads.find(d => d.id === detailedTaskId) && (
-        <DetailedProgress 
-          task={downloads.find(d => d.id === detailedTaskId)!} 
-          onClose={() => setDetailedTaskId(null)} 
+
+      {detailedTaskId && (
+        <DetailedProgress
+          task={downloads.find(d => d.id === detailedTaskId)!}
+          speedHistory={speedHistoryMap.current.get(detailedTaskId) || []}
+          onClose={() => setDetailedTaskId(null)}
           onDelete={() => {
             setDeletingIds(new Set([detailedTaskId]));
             setDetailedTaskId(null);
@@ -308,7 +398,7 @@ function App() {
       )}
 
       {deletingIds && (
-        <DeleteConfirmationDialog 
+        <DeleteConfirmationDialog
           count={deletingIds.size}
           onConfirm={handleConfirmDelete}
           onCancel={() => setDeletingIds(null)}
@@ -328,18 +418,108 @@ function App() {
               <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">
                 {activeCategory === 'all' ? 'Downloads' : activeCategory}
               </h2>
+              <span className="text-[10px] font-bold text-gray-600 bg-white/5 px-2 py-0.5 rounded-lg">
+                {appVersion}
+              </span>
+              {/* Update available banner */}
+              {updateInfo?.available && (
+                <div className="flex items-center space-x-2 bg-green-500/10 border border-green-500/20 px-2 py-1 rounded-lg">
+                  <span className="text-[10px] font-bold text-green-400">⬆ v{updateInfo.latest} available</span>
+                  <button onClick={() => OpenInBrowser(updateInfo.url)} className="text-[10px] font-bold text-green-300 hover:text-green-100 underline">Download</button>
+                  <button onClick={() => setUpdateInfo(null)} className="text-gray-600 hover:text-gray-400 text-xs leading-none">✕</button>
+                </div>
+              )}
               {Object.values(deps).some(v => !v) && (
-                <div className="flex items-center space-x-1.5 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg">
+                <div className="flex items-center space-x-1.5 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg cursor-pointer hover:bg-amber-500/20 transition-all"
+                  title="Click to auto-install missing tools">
                   <svg className="w-3.5 h-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
                   <span className="text-[10px] font-medium text-amber-500/80">
-                    {Object.entries(deps).filter(([_, v]) => !v).map(([k]) => k).join(', ')}
+                    {Object.entries(deps).filter(([_, v]) => !v).map(([k]) => k).join(', ')} missing —{' '}
+                    <span className="underline" onClick={() => {
+                      const missing = Object.entries(deps).filter(([_, v]) => !v).map(([k]) => k);
+                      if (missing.length > 0) {
+                        const dep = missing[0];
+                        setInstallingDep(dep);
+                        setDepProgress(0);
+                        InstallDependency(dep).catch(() => setInstallingDep(null));
+                      }
+                    }}>Install</span>
                   </span>
                 </div>
               )}
             </div>
             <div className="flex items-center space-x-2">
+              <button
+                disabled={isExporting}
+                onClick={() => {
+                  setIsExporting(true);
+                  ExportDownloads()
+                    .finally(() => setIsExporting(false));
+                }}
+                title="Export Downloads"
+                className="flex items-center space-x-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-xs font-bold px-3 py-2 rounded-lg transition-all active:scale-95 border border-white/5 disabled:opacity-50"
+              >
+                <svg className={`w-4 h-4 ${isExporting ? 'animate-bounce' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>{isExporting ? 'Working...' : 'Export'}</span>
+              </button>
+
+              <button
+                disabled={isImporting}
+                onClick={() => {
+                  setIsImporting(true);
+                  ImportDownloads().then(n => {
+                    if (n > 0) GetDownloads().then(data => setDownloads(data || []));
+                  }).finally(() => setIsImporting(false));
+                }}
+                title="Import Downloads"
+                className="flex items-center space-x-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-xs font-bold px-3 py-2 rounded-lg transition-all active:scale-95 border border-white/5 disabled:opacity-50"
+              >
+                <svg className={`w-4 h-4 ${isImporting ? 'animate-bounce' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12" />
+                </svg>
+                <span>{isImporting ? 'Working...' : 'Import'}</span>
+              </button>
+
+              <button
+                disabled={isRegistering}
+                onClick={() => {
+                  setIsRegistering(true);
+                  RegisterBrowserExtension()
+                    .then(() => alert("Native host registered! Extension is in legacy_code/browser_extension"))
+                    .catch(e => alert("Error: " + e))
+                    .finally(() => setIsRegistering(false));
+                }}
+                title="Install Browser Extension"
+                className="flex items-center space-x-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-xs font-bold px-3 py-2 rounded-lg transition-all active:scale-95 border border-white/5 disabled:opacity-50"
+              >
+                <svg className={`w-4 h-4 ${isRegistering ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>{isRegistering ? 'Working...' : 'Extension'}</span>
+              </button>
+
+              <button
+                disabled={isZipping}
+                onClick={() => {
+                  setIsZipping(true);
+                  PackageExtension()
+                    .then(path => path && alert("Extension zipped successfully to: " + path))
+                    .catch(e => alert("Error: " + e))
+                    .finally(() => setIsZipping(false));
+                }}
+                title="Package Extension as ZIP"
+                className="flex items-center space-x-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-xs font-bold px-3 py-2 rounded-lg transition-all active:scale-95 border border-white/5 disabled:opacity-50"
+              >
+                <svg className={`w-4 h-4 ${isZipping ? 'animate-pulse' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                </svg>
+                <span>{isZipping ? 'Zipping...' : 'Zip'}</span>
+              </button>
               <button onClick={() => setShowScheduler(true)} title="Queue Manager"
                 className="flex items-center space-x-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-xs font-bold px-3 py-2 rounded-lg transition-all active:scale-95 border border-white/5">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -347,6 +527,7 @@ function App() {
                 </svg>
                 <span>Scheduler</span>
               </button>
+
               <button onClick={() => setIsAdding(true)}
                 className="flex items-center space-x-1.5 bg-xdm-accent hover:bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all shadow-lg shadow-blue-600/20 active:scale-95">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -363,15 +544,13 @@ function App() {
             <div className="flex items-center space-x-1 bg-white/[0.03] rounded-lg p-0.5">
               {statusTabs.map(tab => (
                 <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
-                    activeTab === tab.id
-                      ? 'bg-xdm-accent text-white shadow-sm'
-                      : 'text-gray-500 hover:text-gray-300'
-                  }`}>
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === tab.id
+                    ? 'bg-xdm-accent text-white shadow-sm'
+                    : 'text-gray-500 hover:text-gray-300'
+                    }`}>
                   {tab.label}
-                  <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full ${
-                    activeTab === tab.id ? 'bg-white/20' : 'bg-white/5'
-                  }`}>{tab.count}</span>
+                  <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-white/20' : 'bg-white/5'
+                    }`}>{tab.count}</span>
                 </button>
               ))}
             </div>
@@ -389,11 +568,10 @@ function App() {
 
               {/* Sort Buttons */}
               <div className="flex items-center space-x-0.5 bg-white/[0.03] rounded-lg p-0.5">
-                {([['name','Name'],['size','Size'],['date','Date'],['status','Status']] as [SortKey,string][]).map(([key, label]) => (
+                {([['name', 'Name'], ['size', 'Size'], ['date', 'Date'], ['status', 'Status']] as [SortKey, string][]).map(([key, label]) => (
                   <button key={key} onClick={() => toggleSort(key)}
-                    className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all ${
-                      sortKey === key ? 'bg-white/10 text-white' : 'text-gray-600 hover:text-gray-400'
-                    }`}>
+                    className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all ${sortKey === key ? 'bg-white/10 text-white' : 'text-gray-600 hover:text-gray-400'
+                      }`}>
                     {label} {sortIcon(key)}
                   </button>
                 ))}

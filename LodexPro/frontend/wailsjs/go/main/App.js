@@ -26,6 +26,10 @@ export function DeleteQueue(arg1) {
   return window['go']['main']['App']['DeleteQueue'](arg1);
 }
 
+export function ExportDownloads() {
+  return window['go']['main']['App']['ExportDownloads']();
+}
+
 export function FetchVideoMetadata(arg1) {
   return window['go']['main']['App']['FetchVideoMetadata'](arg1);
 }
@@ -38,12 +42,28 @@ export function GetDownloads() {
   return window['go']['main']['App']['GetDownloads']();
 }
 
+export function GetExtensionInfo() {
+  return window['go']['main']['App']['GetExtensionInfo']();
+}
+
 export function GetMediaList() {
   return window['go']['main']['App']['GetMediaList']();
 }
 
 export function GetQueues() {
   return window['go']['main']['App']['GetQueues']();
+}
+
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
+}
+
+export function ImportDownloads() {
+  return window['go']['main']['App']['ImportDownloads']();
+}
+
+export function InstallDependency(arg1) {
+  return window['go']['main']['App']['InstallDependency'](arg1);
 }
 
 export function IsAutoStartEnabled() {
@@ -62,6 +82,10 @@ export function OpenInBrowser(arg1) {
   return window['go']['main']['App']['OpenInBrowser'](arg1);
 }
 
+export function PackageExtension() {
+  return window['go']['main']['App']['PackageExtension']();
+}
+
 export function PauseDownload(arg1) {
   return window['go']['main']['App']['PauseDownload'](arg1);
 }
@@ -76,6 +100,10 @@ export function ReadClipboard() {
 
 export function RefreshLink(arg1, arg2) {
   return window['go']['main']['App']['RefreshLink'](arg1, arg2);
+}
+
+export function RegisterBrowserExtension() {
+  return window['go']['main']['App']['RegisterBrowserExtension']();
 }
 
 export function RemoveMediaItem(arg1) {
@@ -104,6 +132,10 @@ export function SetAutoStart(arg1) {
 
 export function SetSpeedLimit(arg1) {
   return window['go']['main']['App']['SetSpeedLimit'](arg1);
+}
+
+export function ShowWindow() {
+  return window['go']['main']['App']['ShowWindow']();
 }
 
 export function StartQueue(arg1) {

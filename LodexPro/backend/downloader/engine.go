@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -74,20 +75,41 @@ type Engine struct {
 	client           *http.Client
 	ProgressCallback func(*models.DownloadTask)
 	limiter          *RateLimiter
+	clientMu         sync.RWMutex
+}
+
+func buildTransport(proxyURL *url.URL) *http.Transport {
+	t := &http.Transport{
+		MaxIdleConns:        100,
+		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConnsPerHost: 20,
+	}
+	if proxyURL != nil {
+		t.Proxy = http.ProxyURL(proxyURL)
+	}
+	return t
 }
 
 func NewEngine(pc func(*models.DownloadTask)) *Engine {
 	return &Engine{
-		client: &http.Client{
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				IdleConnTimeout:     90 * time.Second,
-				MaxIdleConnsPerHost: 20,
-			},
-		},
+		client:           &http.Client{Transport: buildTransport(nil)},
 		ProgressCallback: pc,
 		limiter:          NewRateLimiter(0), // 0 means unlimited
 	}
+}
+
+// SetProxy updates the HTTP client to route through the given proxy URL.
+// Pass an empty string to disable proxy.
+func (e *Engine) SetProxy(proxyURLStr string) {
+	var parsed *url.URL
+	if proxyURLStr != "" {
+		if u, err := url.Parse(proxyURLStr); err == nil {
+			parsed = u
+		}
+	}
+	e.clientMu.Lock()
+	e.client = &http.Client{Transport: buildTransport(parsed)}
+	e.clientMu.Unlock()
 }
 
 func (e *Engine) SetGlobalSpeedLimit(bytesPerSec int64) {
@@ -101,10 +123,14 @@ func (e *Engine) FetchMetadata(url string) (*models.DownloadTask, error) {
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-	resp, err := e.client.Do(req)
+	e.clientMu.RLock()
+	client := e.client
+	e.clientMu.RUnlock()
+
+	resp, err := client.Do(req)
 	if err != nil {
 		// Fallback to GET if HEAD refers to an error
-		resp, err = e.client.Get(url)
+		resp, err = client.Get(url)
 		if err != nil {
 			return nil, err
 		}
@@ -282,7 +308,11 @@ func (e *Engine) downloadSegment(ctx context.Context, task *models.DownloadTask,
 	req.Header.Set("Range", rangeHeader)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-	resp, err := e.client.Do(req)
+	e.clientMu.RLock()
+	client := e.client
+	e.clientMu.RUnlock()
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

@@ -59,3 +59,18 @@ cache/
 
 # Databases
 *.db
+
+# Go
+bin/
+*.exe
+*.test
+*.prof
+
+# Wails
+LodexPro/build/bin/
+LodexPro/frontend/dist/
+# LodexPro/frontend/wailsjs/ # Usually committed for other devs, but we can exclude if pure source is preferred. I'll leave it in for context.
+
+# App Specific
+LodexPro/lodexpro-host.exe
+LodexPro/com.lodexpro.host.json

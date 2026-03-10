@@ -1,12 +1,12 @@
 package models
 
 type AppConfig struct {
-	MaxSegments          int    `json:"max_segments"`
-	NetworkTimeout       int    `json:"network_timeout"`
-	MaxRetry             int    `json:"max_retry"`
-	RetryDelay           int    `json:"retry_delay"`
-	MaxParallelDownloads int    `json:"max_parallel_downloads"`
-	SpeedLimitKBps       int    `json:"speed_limit_kbps"`
+	MaxSegments          int `json:"max_segments"`
+	NetworkTimeout       int `json:"network_timeout"`
+	MaxRetry             int `json:"max_retry"`
+	RetryDelay           int `json:"retry_delay"`
+	MaxParallelDownloads int `json:"max_parallel_downloads"`
+	SpeedLimitKBps       int `json:"speed_limit_kbps"`
 
 	DefaultDownloadFolder string            `json:"default_download_folder"`
 	FileConflictMode      string            `json:"file_conflict_mode"`
@@ -26,6 +26,7 @@ type AppConfig struct {
 	ScanWithAntiVirus   bool   `json:"scan_with_antivirus"`
 	AntiVirusExecutable string `json:"antivirus_executable"`
 	AntiVirusArgs       string `json:"antivirus_args"`
+	VirusTotalAPIKey    string `json:"virustotal_api_key"`
 
 	ProxyMode string `json:"proxy_mode"`
 	ProxyHost string `json:"proxy_host"`
